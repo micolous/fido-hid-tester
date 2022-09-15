@@ -31,6 +31,7 @@ const TYPE_INIT: u8 = 0x80;
 const U2FHID_MSG: u8 = TYPE_INIT | 0x03;
 const U2FHID_INIT: u8 = TYPE_INIT | 0x06;
 const U2FHID_ERROR: u8 = TYPE_INIT | 0x3f;
+const CAPABILITY_NMSG: u8 = 0x08;
 
 const CID_BROADCAST: u32 = 0xffffffff;
 
@@ -41,12 +42,51 @@ const U2F_VERSION_EXPECTED: [u8; 6] = [
 // https://github.com/mozilla/authenticator-rs/issues/190
 const U2F_VERSION_REQ_BAD: [u8; 9] = [0, 3, 0, 0, 0, 0, 0, 0, 0];
 
+/// U2F HID request frame type
 #[derive(Debug)]
 struct U2FHIDFrame<'a> {
+    /// Channel identifier
     cid: u32,
+    /// Command identifier
     cmd: u8,
     // len: u16,
+    /// Payload data
     data: Option<&'a [u8]>,
+}
+
+impl U2FHIDFrame<'_> {
+    /// Serialises a U2FHIDFrame to bytes to be send via a USB HID report
+    fn as_bytes(&self) -> Vec<u8> {
+        // This does not implement fragmentation / continuation packets!
+
+        let mut o: Vec<u8> = vec![0; HID_RPT_SIZE + 1];
+        // o[0] = 0; (Report ID)
+        o[1] = (self.cid >> 24) as u8;
+        o[2] = (self.cid >> 16) as u8;
+        o[3] = (self.cid >> 8) as u8;
+        o[4] = self.cid as u8;
+        o[5] = self.cmd;
+        match self.data {
+            Some(d) => {
+                if d.len() + 8 > HID_RPT_SIZE + 1 {
+                    panic!("Data payload too long");
+                }
+                o[6] = (d.len() >> 8) as u8;
+                o[7] = d.len() as u8;
+                o[8..8 + d.len()].copy_from_slice(&d);
+            }
+            None => (),
+        }
+
+        o
+    }
+
+    /// Sends a single message to a U2F device
+    fn send(&self, dev: &HidDevice) {
+        let d = self.as_bytes();
+        println!(">>> {:02x?}", d);
+        dev.write(&d).expect("Error writing to device");
+    }
 }
 
 #[derive(Debug)]
@@ -96,41 +136,15 @@ enum Payload {
     UNKNOWN,
 }
 
+/// U2F HID response frame type
 #[derive(Debug)]
 struct U2FHIDResponseFrame {
     cid: u32,
     payload: Payload,
 }
 
-impl U2FHIDFrame<'_> {
-    fn as_bytes(&self) -> Vec<u8> {
-        // This does not implement fragmentation!
-
-        let mut o: Vec<u8> = vec![0; HID_RPT_SIZE + 1];
-        // o[0] = 0; (Report ID)
-        o[1] = (self.cid >> 24) as u8;
-        o[2] = (self.cid >> 16) as u8;
-        o[3] = (self.cid >> 8) as u8;
-        o[4] = self.cid as u8;
-        o[5] = self.cmd;
-        match self.data {
-            Some(d) => {
-                if d.len() + 8 > HID_RPT_SIZE + 1 {
-                    panic!("Data payload too long");
-                }
-                o[6] = (d.len() >> 8) as u8;
-                o[7] = d.len() as u8;
-                o[8..8 + d.len()].copy_from_slice(&d);
-            }
-            None => (),
-        }
-
-        o
-    }
-}
-
 impl U2FHIDResponseFrame {
-    fn from_bytes<'a>(b: &'a [u8]) -> U2FHIDResponseFrame {
+    fn from_bytes(b: &[u8]) -> U2FHIDResponseFrame {
         let len = (b[5] as usize) << 8 | b[6] as usize;
         let data = if len == 0 || len > b.len() + 7 {
             None
@@ -196,26 +210,21 @@ impl U2FHIDResponseFrame {
             payload,
         }
     }
-}
 
-fn send(dev: &HidDevice, msg: U2FHIDFrame) {
-    let d = msg.as_bytes();
-    println!(">>> {:02x?}", d);
-    dev.write(&d).expect("Error writing to device");
-}
+    /// Receives a single message from a U2F device
+    fn recv(dev: &HidDevice, cid: u32) -> Self {
+        let mut ret: Vec<u8> = vec![0; HID_RPT_SIZE];
 
-fn recv(dev: &HidDevice, cid: u32) -> U2FHIDResponseFrame {
-    let mut ret: Vec<u8> = vec![0; HID_RPT_SIZE];
+        let len = dev
+            .read_timeout(&mut ret, U2FHID_TRANS_TIMEOUT)
+            .expect("failure reading");
 
-    let len = dev
-        .read_timeout(&mut ret, U2FHID_TRANS_TIMEOUT)
-        .expect("failure reading");
-
-    println!("<<< {:02x?}", &ret[..len]);
-    let r = U2FHIDResponseFrame::from_bytes(&ret[..len]);
-    println!("<<< {:?}", r);
-    assert_eq!(cid, r.cid);
-    r
+        println!("<<< {:02x?}", &ret[..len]);
+        let r = Self::from_bytes(&ret[..len]);
+        println!("<<< {:?}", r);
+        assert_eq!(cid, r.cid);
+        r
+    }
 }
 
 fn main() {
@@ -259,15 +268,14 @@ fn main() {
         let mut nonce: [u8; 8] = [0; 8];
         rng.fill_bytes(&mut nonce);
 
-        let init = U2FHIDFrame {
+        println!("Sending INIT");
+        U2FHIDFrame {
             cid: CID_BROADCAST,
             cmd: U2FHID_INIT,
             data: Some(&nonce),
-        };
-
-        println!("Sending INIT");
-        send(&channel, init);
-        let res = recv(&channel, CID_BROADCAST);
+        }
+        .send(&channel);
+        let res = U2FHIDResponseFrame::recv(&channel, CID_BROADCAST);
         let cid: u32 = match res.payload {
             Payload::INIT(i) => {
                 // check nonce
@@ -284,6 +292,13 @@ fn main() {
                     i.device_version_build,
                     i.capabilities
                 );
+
+                if i.capabilities & CAPABILITY_NMSG == CAPABILITY_NMSG {
+                    println!("Device set CAPABILITY_NMSG, does not support FIDOv1");
+                    no_fido1.push((name, device));
+                    continue;
+                }
+
                 i.cid
             }
             o => {
@@ -294,15 +309,13 @@ fn main() {
 
         // We now have a channel to talk on.
         println!("Sending properly formed VERSION request...");
-        send(
-            &channel,
-            U2FHIDFrame {
-                cid,
-                cmd: U2FHID_MSG,
-                data: Some(&U2F_VERSION_REQ),
-            },
-        );
-        let res = recv(&channel, cid);
+        U2FHIDFrame {
+            cid,
+            cmd: U2FHID_MSG,
+            data: Some(&U2F_VERSION_REQ),
+        }
+        .send(&channel);
+        let res = U2FHIDResponseFrame::recv(&channel, cid);
         let mut ver_err = false;
         match res.payload {
             Payload::MSG(m) => {
@@ -331,15 +344,13 @@ fn main() {
         }
 
         println!("Sending malformed VERSION request...");
-        send(
-            &channel,
-            U2FHIDFrame {
-                cid,
-                cmd: U2FHID_MSG,
-                data: Some(&U2F_VERSION_REQ_BAD),
-            },
-        );
-        let res = recv(&channel, cid);
+        U2FHIDFrame {
+            cid,
+            cmd: U2FHID_MSG,
+            data: Some(&U2F_VERSION_REQ_BAD),
+        }
+        .send(&channel);
+        let res = U2FHIDResponseFrame::recv(&channel, cid);
 
         match res.payload {
             Payload::MSG(m) => {
@@ -435,10 +446,7 @@ fn main() {
     }
 
     println!("");
-    println!(
-        "{} device(s) didn't accept any GET_VERSION request, and probably don't support FIDOv1:",
-        no_fido1.len()
-    );
+    println!("{} device(s) don't support FIDOv1:", no_fido1.len());
     for (name, device) in &no_fido1 {
         println!(
             "- {:04x}:{:04x}: {}",
