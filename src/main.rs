@@ -204,7 +204,7 @@ fn send(dev: &HidDevice, msg: U2FHIDFrame) {
     dev.write(&d).expect("Error writing to device");
 }
 
-fn recv<'a>(dev: &HidDevice, cid: u32) -> U2FHIDResponseFrame {
+fn recv(dev: &HidDevice, cid: u32) -> U2FHIDResponseFrame {
     let mut ret: Vec<u8> = vec![0; HID_RPT_SIZE];
 
     let len = dev
