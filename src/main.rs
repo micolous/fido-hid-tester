@@ -51,7 +51,7 @@ struct U2FHIDFrame<'a> {
     cmd: u8,
     // len: u16,
     /// Payload data
-    data: Option<&'a [u8]>,
+    data: &'a [u8],
 }
 
 impl U2FHIDFrame<'_> {
@@ -66,17 +66,13 @@ impl U2FHIDFrame<'_> {
         o[3] = (self.cid >> 8) as u8;
         o[4] = self.cid as u8;
         o[5] = self.cmd;
-        match self.data {
-            Some(d) => {
-                if d.len() + 8 > HID_RPT_SIZE + 1 {
-                    panic!("Data payload too long");
-                }
-                o[6] = (d.len() >> 8) as u8;
-                o[7] = d.len() as u8;
-                o[8..8 + d.len()].copy_from_slice(&d);
-            }
-            None => (),
+
+        if self.data.len() + 8 > HID_RPT_SIZE + 1 {
+            panic!("Data payload too long");
         }
+        o[6] = (self.data.len() >> 8) as u8;
+        o[7] = self.data.len() as u8;
+        o[8..8 + self.data.len()].copy_from_slice(&self.data);
 
         o
     }
@@ -85,6 +81,7 @@ impl U2FHIDFrame<'_> {
     fn send(&self, dev: &HidDevice) {
         let d = self.as_bytes();
         println!(">>> {:02x?}", d);
+        println!(">>> {:?}", self);
         dev.write(&d).expect("Error writing to device");
     }
 }
@@ -92,7 +89,9 @@ impl U2FHIDFrame<'_> {
 #[derive(Debug)]
 struct InitResponse {
     nonce: Vec<u8>,
+    /// Allocated channel identifier
     cid: u32,
+    /// U2F protocol version (2)
     protocol_version: u8,
     device_version_major: u8,
     device_version_minor: u8,
@@ -100,14 +99,19 @@ struct InitResponse {
     capabilities: u8,
 }
 
+/// CTAPv1 APDU (ISO 7816-like)
 #[derive(Debug, PartialEq)]
 struct MessageResponse {
+    /// Data payload
     data: Vec<u8>,
+    /// Status byte 1
     sw1: u8,
+    /// Status byte 2
     sw2: u8,
 }
 
 impl MessageResponse {
+    /// Did we get a simple "ok" response?
     fn is_ok(&self) -> bool {
         self.sw1 == 0x90 && self.sw2 == 0
     }
@@ -144,6 +148,7 @@ struct U2FHIDResponseFrame {
 }
 
 impl U2FHIDResponseFrame {
+    /// Deserialize a U2FHID payload
     fn from_bytes(b: &[u8]) -> U2FHIDResponseFrame {
         let len = (b[5] as usize) << 8 | b[6] as usize;
         let data = if len == 0 || len > b.len() + 7 {
@@ -268,11 +273,11 @@ fn main() {
         let mut nonce: [u8; 8] = [0; 8];
         rng.fill_bytes(&mut nonce);
 
-        println!("Sending INIT");
+        println!("Sending INIT...");
         U2FHIDFrame {
             cid: CID_BROADCAST,
             cmd: U2FHID_INIT,
-            data: Some(&nonce),
+            data: &nonce,
         }
         .send(&channel);
         let res = U2FHIDResponseFrame::recv(&channel, CID_BROADCAST);
@@ -312,7 +317,7 @@ fn main() {
         U2FHIDFrame {
             cid,
             cmd: U2FHID_MSG,
-            data: Some(&U2F_VERSION_REQ),
+            data: &U2F_VERSION_REQ,
         }
         .send(&channel);
         let res = U2FHIDResponseFrame::recv(&channel, cid);
@@ -347,7 +352,7 @@ fn main() {
         U2FHIDFrame {
             cid,
             cmd: U2FHID_MSG,
-            data: Some(&U2F_VERSION_REQ_BAD),
+            data: &U2F_VERSION_REQ_BAD,
         }
         .send(&channel);
         let res = U2FHIDResponseFrame::recv(&channel, cid);

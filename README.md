@@ -20,19 +20,22 @@ This will test every U2F USB HID device attached to your computer, and give you 
      Running `target/debug/fido-hid-tester`
 
 Testing device 2581:f1d0: Plug-up Plug-up
-Sending INIT
->>> [0, 255, 255, 255, 255, 134, 0, 8, 93, 135, 250, 22, 174, 230, 234, 206, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-<<< [255, 255, 255, 255, 134, 0, 17, 93, 135, 250, 22, 174, 230, 234, 206, 8, 135, 35, 202, 2, 1, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-<<< U2FHIDResponseFrame { cid: 4294967295, payload: INIT(InitResponse { nonce: [93, 135, 250, 22, 174, 230, 234, 206], cid: 143074250, protocol_version: 2, device_version_major: 1, device_version_minor: 6, device_version_build: 7, capabilities: 0 }) }
+Sending INIT...
+>>> [00, ff, ff, ff, ff, 86, 00, 08, 1a, 72, 52, 3a, 20, 42, c5, 9c, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00]
+>>> U2FHIDFrame { cid: 4294967295, cmd: 134, data: [26, 114, 82, 58, 32, 66, 197, 156] }
+<<< [ff, ff, ff, ff, 86, 00, 11, 1a, 72, 52, 3a, 20, 42, c5, 9c, b2, e5, 1d, a3, 02, 01, 06, 07, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00]
+<<< U2FHIDResponseFrame { cid: 4294967295, payload: INIT(InitResponse { nonce: [26, 114, 82, 58, 32, 66, 197, 156], cid: 3001359779, protocol_version: 2, device_version_major: 1, device_version_minor: 6, device_version_build: 7, capabilities: 0 }) }
 Protocol v2, Device v1.6.7, Capabilities 0x00
 Sending properly formed VERSION request...
->>> [0, 8, 135, 35, 202, 131, 0, 7, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-<<< [8, 135, 35, 202, 131, 0, 8, 85, 50, 70, 95, 86, 50, 144, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-<<< U2FHIDResponseFrame { cid: 143074250, payload: MSG([85, 50, 70, 95, 86, 50, 144, 0]) }
+>>> [00, b2, e5, 1d, a3, 83, 00, 07, 00, 03, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00]
+>>> U2FHIDFrame { cid: 3001359779, cmd: 131, data: [0, 3, 0, 0, 0, 0, 0] }
+<<< [b2, e5, 1d, a3, 83, 00, 08, 55, 32, 46, 5f, 56, 32, 90, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00]
+<<< U2FHIDResponseFrame { cid: 3001359779, payload: MSG(MessageResponse { data: [85, 50, 70, 95, 86, 50], sw1: 144, sw2: 0 }) }
 Sending malformed VERSION request...
->>> [0, 8, 135, 35, 202, 131, 0, 9, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-<<< [8, 135, 35, 202, 131, 0, 8, 85, 50, 70, 95, 86, 50, 144, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-<<< U2FHIDResponseFrame { cid: 143074250, payload: MSG([85, 50, 70, 95, 86, 50, 144, 0]) }
+>>> [00, b2, e5, 1d, a3, 83, 00, 09, 00, 03, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00]
+>>> U2FHIDFrame { cid: 3001359779, cmd: 131, data: [0, 3, 0, 0, 0, 0, 0, 0, 0] }
+<<< [b2, e5, 1d, a3, 83, 00, 08, 55, 32, 46, 5f, 56, 32, 90, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00]
+<<< U2FHIDResponseFrame { cid: 3001359779, payload: MSG(MessageResponse { data: [85, 50, 70, 95, 86, 50], sw1: 144, sw2: 0 }) }
 Device responded normally to bad request!
 
 [...]
@@ -41,16 +44,14 @@ Final report:
 
 0 device(s) reported ERROR for bad GET_VERSION request:
 
-5 device(s) reported OK for bad GET_VERSION request:
+3 device(s) reported OK for bad GET_VERSION request:
 - 2581:f1d0: Plug-up Plug-up
 - 20a0:42b1: Nitrokey Nitrokey FIDO2 2.0.0
-- 2581:f1d0: Plug-up Plug-up
 - 1050:0402: Yubico YubiKey FIDO
-- 2581:f1d0: Plug-up Plug-up
 
 0 device(s) only accepted bad GET_VERSION request:
 
-0 device(s) didn't accept any GET_VERSION request, and probably don't support FIDOv1:
+0 device(s) don't support FIDOv1:
 
 0 device(s) reported some other issue
 ```
