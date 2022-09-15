@@ -35,9 +35,8 @@ const U2FHID_ERROR: u8 = TYPE_INIT | 0x3f;
 const CID_BROADCAST: u32 = 0xffffffff;
 
 const U2F_VERSION_REQ: [u8; 7] = [0, 3, 0, 0, 0, 0, 0];
-const U2F_VERSION_EXPECTED: [u8; 8] = [
+const U2F_VERSION_EXPECTED: [u8; 6] = [
     0x55, 0x32, 0x46, 0x5F, 0x56, 0x32, // U2F_V2
-    0x90, 0x00, // ISO 7816 STATUS_OK
 ];
 // https://github.com/mozilla/authenticator-rs/issues/190
 const U2F_VERSION_REQ_BAD: [u8; 9] = [0, 3, 0, 0, 0, 0, 0, 0, 0];
@@ -61,6 +60,19 @@ struct InitResponse {
     capabilities: u8,
 }
 
+#[derive(Debug, PartialEq)]
+struct MessageResponse {
+    data: Vec<u8>,
+    sw1: u8,
+    sw2: u8,
+}
+
+impl MessageResponse {
+    fn is_ok(&self) -> bool {
+        self.sw1 == 0x90 && self.sw2 == 0
+    }
+}
+
 #[derive(Debug)]
 enum U2FError {
     None,
@@ -77,9 +89,9 @@ enum U2FError {
 }
 
 #[derive(Debug)]
-enum ResponsePayload {
+enum Payload {
     INIT(InitResponse),
-    MSG(Vec<u8>),
+    MSG(MessageResponse),
     ERROR(U2FError),
     UNKNOWN,
 }
@@ -87,7 +99,7 @@ enum ResponsePayload {
 #[derive(Debug)]
 struct U2FHIDResponseFrame {
     cid: u32,
-    payload: ResponsePayload,
+    payload: Payload,
 }
 
 impl U2FHIDFrame<'_> {
@@ -130,7 +142,7 @@ impl U2FHIDResponseFrame {
             Some(d) => match b[4] {
                 U2FHID_INIT => {
                     if d.len() >= 17 {
-                        ResponsePayload::INIT(InitResponse {
+                        Payload::INIT(InitResponse {
                             nonce: (&d[..8]).to_vec(),
                             cid: (d[8] as u32) << 24
                                 | (d[9] as u32) << 16
@@ -143,11 +155,21 @@ impl U2FHIDResponseFrame {
                             capabilities: d[16],
                         })
                     } else {
-                        ResponsePayload::UNKNOWN
+                        Payload::UNKNOWN
                     }
                 }
-                U2FHID_MSG => ResponsePayload::MSG(d.to_vec()),
-                U2FHID_ERROR => ResponsePayload::ERROR(if d.len() >= 1 {
+                U2FHID_MSG => {
+                    if d.len() >= 2 {
+                        Payload::MSG(MessageResponse {
+                            data: d[..d.len() - 2].to_vec(),
+                            sw1: d[d.len() - 2],
+                            sw2: d[d.len() - 1],
+                        })
+                    } else {
+                        Payload::UNKNOWN
+                    }
+                }
+                U2FHID_ERROR => Payload::ERROR(if d.len() >= 1 {
                     match d[0] {
                         0x00 => U2FError::None,
                         0x01 => U2FError::InvalidCommand,
@@ -164,9 +186,9 @@ impl U2FHIDResponseFrame {
                 } else {
                     U2FError::Unknown
                 }),
-                _ => ResponsePayload::UNKNOWN,
+                _ => Payload::UNKNOWN,
             },
-            None => ResponsePayload::UNKNOWN,
+            None => Payload::UNKNOWN,
         };
 
         U2FHIDResponseFrame {
@@ -178,7 +200,7 @@ impl U2FHIDResponseFrame {
 
 fn send(dev: &HidDevice, msg: U2FHIDFrame) {
     let d = msg.as_bytes();
-    println!(">>> {:?}", d);
+    println!(">>> {:02x?}", d);
     dev.write(&d).expect("Error writing to device");
 }
 
@@ -189,7 +211,7 @@ fn recv<'a>(dev: &HidDevice, cid: u32) -> U2FHIDResponseFrame {
         .read_timeout(&mut ret, U2FHID_TRANS_TIMEOUT)
         .expect("failure reading");
 
-    println!("<<< {:?}", &ret[..len]);
+    println!("<<< {:02x?}", &ret[..len]);
     let r = U2FHIDResponseFrame::from_bytes(&ret[..len]);
     println!("<<< {:?}", r);
     assert_eq!(cid, r.cid);
@@ -220,14 +242,14 @@ fn main() {
             (Some(m), Some(p)) => format!("{} {}", m, p),
             (Some(m), _) => m.to_string(),
             (_, Some(p)) => p.to_string(),
-            (_, _) => String::new(),
+            _ => String::new(),
         };
         println!();
         println!(
             "Testing device {:04x}:{:04x}: {}",
             device.vendor_id(),
             device.product_id(),
-            name
+            name,
         );
 
         // Open a channel
@@ -247,14 +269,21 @@ fn main() {
         send(&channel, init);
         let res = recv(&channel, CID_BROADCAST);
         let cid: u32 = match res.payload {
-            ResponsePayload::INIT(i) => {
+            Payload::INIT(i) => {
                 // check nonce
                 if i.nonce != &nonce {
                     println!("Unexpected nonce value!");
                     continue;
                 }
 
-                println!("Protocol v{}, Device v{}.{}.{}, Capabilities 0x{:02x}", i.protocol_version, i.device_version_major, i.device_version_minor, i.device_version_build, i.capabilities);
+                println!(
+                    "Protocol v{}, Device v{}.{}.{}, Capabilities 0x{:02x}",
+                    i.protocol_version,
+                    i.device_version_major,
+                    i.device_version_minor,
+                    i.device_version_build,
+                    i.capabilities
+                );
                 i.cid
             }
             o => {
@@ -276,13 +305,19 @@ fn main() {
         let res = recv(&channel, cid);
         let mut ver_err = false;
         match res.payload {
-            ResponsePayload::MSG(m) => {
-                if m != &U2F_VERSION_EXPECTED {
+            Payload::MSG(m) => {
+                if !m.is_ok() {
+                    println!("Got non-OK response on ISO7816 level, probably an error");
+                    println!(
+                        "The device may not support FIDOv1? Otherwise this is a protocol violation."
+                    );
+                    ver_err = true;
+                } else if m.data != &U2F_VERSION_EXPECTED {
                     println!("Unexpected version response!");
                     continue;
                 }
             }
-            ResponsePayload::ERROR(e) => {
+            Payload::ERROR(e) => {
                 println!("Device responded with error: {:?}", e);
                 println!(
                     "The device may not support FIDOv1? Otherwise this is a protocol violation."
@@ -307,23 +342,33 @@ fn main() {
         let res = recv(&channel, cid);
 
         match res.payload {
-            ResponsePayload::MSG(m) => {
-                if m == &U2F_VERSION_EXPECTED {
-                    println!("Device responded normally to bad request!");
-                    if ver_err {
-                        println!(
-                            "Correct request returned an error, so this is a protocol violation!"
-                        );
-                        bad_only.push((name, device));
+            Payload::MSG(m) => {
+                if m.is_ok() {
+                    if m.data == &U2F_VERSION_EXPECTED {
+                        println!("Device responded normally to bad request!");
+                        if ver_err {
+                            println!(
+                                "Correct request returned an error, so this is a protocol violation!"
+                            );
+                            bad_only.push((name, device));
+                        } else {
+                            bad_ok.push((name, device));
+                        }
                     } else {
-                        bad_ok.push((name, device));
+                        println!("Unexpected version response!");
+                        continue;
                     }
                 } else {
-                    println!("Unexpected version response!");
-                    continue;
+                    println!("Got non-OK response on ISO7816 level, probably an error");
+                    if ver_err {
+                        println!("This device doesn't support FIDOv1.");
+                        no_fido1.push((name, device));
+                    } else {
+                        bad_err.push((name, device));
+                    }
                 }
             }
-            ResponsePayload::ERROR(e) => {
+            Payload::ERROR(e) => {
                 println!("Device responded with error: {:?}", e);
                 if ver_err {
                     println!("This device doesn't support FIDOv1.");
