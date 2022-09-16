@@ -20,7 +20,7 @@ extern crate rand;
 
 use hidapi::{DeviceInfo, HidApi, HidDevice};
 use rand::prelude::*;
-use std::convert::{From, TryFrom};
+use std::convert::{From, TryFrom, TryInto};
 
 // u2f_hid.h
 const FIDO_USAGE_PAGE: u16 = 0xf1d0;
@@ -62,17 +62,13 @@ impl Into<Vec<u8>> for &U2FHIDFrame<'_> {
 
         let mut o: Vec<u8> = vec![0; HID_RPT_SIZE + 1];
         // o[0] = 0; (Report ID)
-        o[1] = (self.cid >> 24) as u8;
-        o[2] = (self.cid >> 16) as u8;
-        o[3] = (self.cid >> 8) as u8;
-        o[4] = self.cid as u8;
+        o[1..5].copy_from_slice(&self.cid.to_be_bytes());
         o[5] = self.cmd;
 
         if self.data.len() + 8 > o.len() {
             panic!("Data payload too long");
         }
-        o[6] = (self.data.len() >> 8) as u8;
-        o[7] = self.data.len() as u8;
+        o[6..8].copy_from_slice(&(self.data.len() as u16).to_be_bytes());
         o[8..8 + self.data.len()].copy_from_slice(&self.data);
 
         o
@@ -108,14 +104,20 @@ impl TryFrom<&[u8]> for InitResponse {
         if d.len() < 17 {
             return Err(());
         }
+
+        let (nonce, d) = d.split_at(8);
+        let nonce = nonce.to_vec();
+        let (cid, d) = d.split_at(4);
+        let cid = cid.try_into().map(u32::from_be_bytes).or(Err(()))?;
+
         Ok(InitResponse {
-            nonce: (&d[..8]).to_vec(),
-            cid: (d[8] as u32) << 24 | (d[9] as u32) << 16 | (d[10] as u32) << 8 | d[11] as u32,
-            protocol_version: d[12],
-            device_version_major: d[13],
-            device_version_minor: d[14],
-            device_version_build: d[15],
-            capabilities: d[16],
+            nonce,
+            cid,
+            protocol_version: d[0],
+            device_version_major: d[1],
+            device_version_minor: d[2],
+            device_version_build: d[3],
+            capabilities: d[4],
         })
     }
 }
@@ -213,31 +215,32 @@ struct U2FHIDResponseFrame {
 impl From<&[u8]> for U2FHIDResponseFrame {
     /// Deserialize a U2FHID payload
     fn from(b: &[u8]) -> Self {
-        let len = (b[5] as usize) << 8 | b[6] as usize;
-        let data = if len == 0 || len > b.len() + 7 {
-            None
-        } else {
-            Some(&b[7..7 + len])
-        };
+        if b.len() < 7 {
+            panic!("Response frame must be at least 7 bytes");
+        }
 
-        let payload = match data {
-            Some(d) => match b[4] {
-                U2FHID_INIT => InitResponse::try_from(d)
+        let (cid, b) = b.split_at(4);
+        let cid = u32::from_be_bytes(cid.try_into().unwrap());
+        let (cmd, b) = (b[0], &b[1..]);
+        let (len, b) = b.split_at(2);
+        let len = u16::from_be_bytes(len.try_into().unwrap()) as usize;
+        let payload = if len == 0 || len > b.len() {
+            Payload::UNKNOWN
+        } else {
+            let b = &b[..len];
+            match cmd {
+                U2FHID_INIT => InitResponse::try_from(b)
                     .map(Payload::INIT)
                     .unwrap_or(Payload::UNKNOWN),
-                U2FHID_MSG => MessageResponse::try_from(d)
+                U2FHID_MSG => MessageResponse::try_from(b)
                     .map(Payload::MSG)
                     .unwrap_or(Payload::UNKNOWN),
-                U2FHID_ERROR => Payload::ERROR(U2FError::from(d)),
+                U2FHID_ERROR => Payload::ERROR(U2FError::from(b)),
                 _ => Payload::UNKNOWN,
-            },
-            None => Payload::UNKNOWN,
+            }
         };
 
-        U2FHIDResponseFrame {
-            cid: (b[0] as u32) << 24 | (b[1] as u32) << 16 | (b[2] as u32) << 8 | b[3] as u32,
-            payload,
-        }
+        U2FHIDResponseFrame { cid, payload }
     }
 }
 
