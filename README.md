@@ -76,18 +76,16 @@ Device responded normally to bad request!
 
 Final report:
 
-0 device(s) reported ERROR for bad GET_VERSION request:
+No devices reported ERROR for bad GET_VERSION request.
 
-3 device(s) reported OK for bad GET_VERSION request:
+3 devices reported OK for bad GET_VERSION request:
 - 2581:f1d0: Plug-up Plug-up
 - 20a0:42b1: Nitrokey Nitrokey FIDO2 2.0.0
 - 1050:0402: Yubico YubiKey FIDO
 
-0 device(s) only accepted bad GET_VERSION request:
+No devices only accepted bad GET_VERSION request (defective!).
 
-0 device(s) don't support FIDOv1:
-
-0 device(s) reported some other issue
+No devices don't support FIDOv1.
 ```
 
 ## Results

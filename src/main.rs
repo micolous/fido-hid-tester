@@ -20,6 +20,7 @@ extern crate rand;
 
 use hidapi::{DeviceInfo, HidApi, HidDevice};
 use rand::prelude::*;
+use std::convert::{From, TryFrom};
 
 // u2f_hid.h
 const FIDO_USAGE_PAGE: u16 = 0xf1d0;
@@ -54,9 +55,9 @@ struct U2FHIDFrame<'a> {
     data: &'a [u8],
 }
 
-impl U2FHIDFrame<'_> {
+impl Into<Vec<u8>> for &U2FHIDFrame<'_> {
     /// Serialises a U2FHIDFrame to bytes to be send via a USB HID report
-    fn as_bytes(&self) -> Vec<u8> {
+    fn into(self) -> Vec<u8> {
         // This does not implement fragmentation / continuation packets!
 
         let mut o: Vec<u8> = vec![0; HID_RPT_SIZE + 1];
@@ -67,7 +68,7 @@ impl U2FHIDFrame<'_> {
         o[4] = self.cid as u8;
         o[5] = self.cmd;
 
-        if self.data.len() + 8 > HID_RPT_SIZE + 1 {
+        if self.data.len() + 8 > o.len() {
             panic!("Data payload too long");
         }
         o[6] = (self.data.len() >> 8) as u8;
@@ -76,10 +77,12 @@ impl U2FHIDFrame<'_> {
 
         o
     }
+}
 
+impl U2FHIDFrame<'_> {
     /// Sends a single message to a U2F device
     fn send(&self, dev: &HidDevice) {
-        let d = self.as_bytes();
+        let d: Vec<u8> = self.into();
         println!(">>> {:02x?}", d);
         println!(">>> {:?}", self);
         dev.write(&d).expect("Error writing to device");
@@ -97,6 +100,24 @@ struct InitResponse {
     device_version_minor: u8,
     device_version_build: u8,
     capabilities: u8,
+}
+
+impl TryFrom<&[u8]> for InitResponse {
+    type Error = ();
+    fn try_from(d: &[u8]) -> Result<Self, Self::Error> {
+        if d.len() < 17 {
+            return Err(());
+        }
+        Ok(InitResponse {
+            nonce: (&d[..8]).to_vec(),
+            cid: (d[8] as u32) << 24 | (d[9] as u32) << 16 | (d[10] as u32) << 8 | d[11] as u32,
+            protocol_version: d[12],
+            device_version_major: d[13],
+            device_version_minor: d[14],
+            device_version_build: d[15],
+            capabilities: d[16],
+        })
+    }
 }
 
 /// CTAPv1 APDU (ISO 7816-like)
@@ -117,6 +138,20 @@ impl MessageResponse {
     }
 }
 
+impl TryFrom<&[u8]> for MessageResponse {
+    type Error = ();
+    fn try_from(d: &[u8]) -> Result<Self, Self::Error> {
+        if d.len() < 2 {
+            return Err(());
+        }
+        Ok(MessageResponse {
+            data: d[..d.len() - 2].to_vec(),
+            sw1: d[d.len() - 2],
+            sw2: d[d.len() - 1],
+        })
+    }
+}
+
 #[derive(Debug)]
 enum U2FError {
     None,
@@ -130,6 +165,34 @@ enum U2FError {
     SyncCommandFailed,
     Unspecified,
     Unknown,
+}
+
+impl From<u8> for U2FError {
+    fn from(v: u8) -> Self {
+        match v {
+            0x00 => U2FError::None,
+            0x01 => U2FError::InvalidCommand,
+            0x02 => U2FError::InvalidParameter,
+            0x03 => U2FError::InvalidMessageLength,
+            0x04 => U2FError::InvalidMessageSequencing,
+            0x05 => U2FError::MessageTimeout,
+            0x06 => U2FError::ChannelBusy,
+            0x0a => U2FError::ChannelRequiresLock,
+            0x0b => U2FError::SyncCommandFailed,
+            0x7f => U2FError::Unspecified,
+            _ => U2FError::Unknown,
+        }
+    }
+}
+
+impl From<&[u8]> for U2FError {
+    fn from(d: &[u8]) -> Self {
+        if d.len() >= 1 {
+            U2FError::from(d[0])
+        } else {
+            U2FError::Unknown
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -147,9 +210,9 @@ struct U2FHIDResponseFrame {
     payload: Payload,
 }
 
-impl U2FHIDResponseFrame {
+impl From<&[u8]> for U2FHIDResponseFrame {
     /// Deserialize a U2FHID payload
-    fn from_bytes(b: &[u8]) -> U2FHIDResponseFrame {
+    fn from(b: &[u8]) -> Self {
         let len = (b[5] as usize) << 8 | b[6] as usize;
         let data = if len == 0 || len > b.len() + 7 {
             None
@@ -159,52 +222,13 @@ impl U2FHIDResponseFrame {
 
         let payload = match data {
             Some(d) => match b[4] {
-                U2FHID_INIT => {
-                    if d.len() >= 17 {
-                        Payload::INIT(InitResponse {
-                            nonce: (&d[..8]).to_vec(),
-                            cid: (d[8] as u32) << 24
-                                | (d[9] as u32) << 16
-                                | (d[10] as u32) << 8
-                                | d[11] as u32,
-                            protocol_version: d[12],
-                            device_version_major: d[13],
-                            device_version_minor: d[14],
-                            device_version_build: d[15],
-                            capabilities: d[16],
-                        })
-                    } else {
-                        Payload::UNKNOWN
-                    }
-                }
-                U2FHID_MSG => {
-                    if d.len() >= 2 {
-                        Payload::MSG(MessageResponse {
-                            data: d[..d.len() - 2].to_vec(),
-                            sw1: d[d.len() - 2],
-                            sw2: d[d.len() - 1],
-                        })
-                    } else {
-                        Payload::UNKNOWN
-                    }
-                }
-                U2FHID_ERROR => Payload::ERROR(if d.len() >= 1 {
-                    match d[0] {
-                        0x00 => U2FError::None,
-                        0x01 => U2FError::InvalidCommand,
-                        0x02 => U2FError::InvalidParameter,
-                        0x03 => U2FError::InvalidMessageLength,
-                        0x04 => U2FError::InvalidMessageSequencing,
-                        0x05 => U2FError::MessageTimeout,
-                        0x06 => U2FError::ChannelBusy,
-                        0x0a => U2FError::ChannelRequiresLock,
-                        0x0b => U2FError::SyncCommandFailed,
-                        0x7f => U2FError::Unspecified,
-                        _ => U2FError::Unknown,
-                    }
-                } else {
-                    U2FError::Unknown
-                }),
+                U2FHID_INIT => InitResponse::try_from(d)
+                    .map(Payload::INIT)
+                    .unwrap_or(Payload::UNKNOWN),
+                U2FHID_MSG => MessageResponse::try_from(d)
+                    .map(Payload::MSG)
+                    .unwrap_or(Payload::UNKNOWN),
+                U2FHID_ERROR => Payload::ERROR(U2FError::from(d)),
                 _ => Payload::UNKNOWN,
             },
             None => Payload::UNKNOWN,
@@ -215,7 +239,9 @@ impl U2FHIDResponseFrame {
             payload,
         }
     }
+}
 
+impl U2FHIDResponseFrame {
     /// Receives a single message from a U2F device
     fn recv(dev: &HidDevice, cid: u32) -> Self {
         let mut ret: Vec<u8> = vec![0; HID_RPT_SIZE];
@@ -225,10 +251,32 @@ impl U2FHIDResponseFrame {
             .expect("failure reading");
 
         println!("<<< {:02x?}", &ret[..len]);
-        let r = Self::from_bytes(&ret[..len]);
+        let r = Self::from(&ret[..len]);
         println!("<<< {:?}", r);
         assert_eq!(cid, r.cid);
         r
+    }
+}
+
+fn list_devices(label: &str, devices: &[(String, &DeviceInfo)]) {
+    println!("");
+    if devices.is_empty() {
+        println!("No devices {}.", label);
+        return;
+    }
+    println!(
+        "{} device{} {}:",
+        devices.len(),
+        if devices.len() > 1 { "s" } else { "" },
+        label
+    );
+    for (name, device) in devices {
+        println!(
+            "- {:04x}:{:04x}: {}",
+            device.vendor_id(),
+            device.product_id(),
+            name
+        );
     }
 }
 
@@ -402,68 +450,21 @@ fn main() {
 
     println!("");
     println!("Final report:");
-    println!("");
-    println!(
-        "{} device(s) reported ERROR for bad GET_VERSION request:",
-        bad_err.len()
+    list_devices("reported ERROR for bad GET_VERSION request", &bad_err);
+    list_devices("reported OK for bad GET_VERSION request", &bad_ok);
+    list_devices(
+        "only accepted bad GET_VERSION request (defective!)",
+        &bad_only,
     );
-    if bad_err.len() > 0 {
-        println!("This is correct behaviour.");
-    }
-    for (name, device) in &bad_err {
+    list_devices("don't support FIDOv1", &no_fido1);
+
+    let other_issues =
+        fido_devices.len() - bad_ok.len() - bad_err.len() - bad_only.len() - no_fido1.len();
+    if other_issues > 0 {
+        println!("");
         println!(
-            "- {:04x}:{:04x}: {}",
-            device.vendor_id(),
-            device.product_id(),
-            name
+            "{} device(s) reported some other issue, check the log!",
+            other_issues
         );
     }
-
-    println!("");
-    println!(
-        "{} device(s) reported OK for bad GET_VERSION request:",
-        bad_ok.len()
-    );
-    for (name, device) in &bad_ok {
-        println!(
-            "- {:04x}:{:04x}: {}",
-            device.vendor_id(),
-            device.product_id(),
-            name
-        );
-    }
-
-    println!("");
-    println!(
-        "{} device(s) only accepted bad GET_VERSION request:",
-        bad_only.len()
-    );
-    if bad_only.len() > 0 {
-        println!("These keys are defective!");
-    }
-    for (name, device) in &bad_only {
-        println!(
-            "- {:04x}:{:04x}: {}",
-            device.vendor_id(),
-            device.product_id(),
-            name
-        );
-    }
-
-    println!("");
-    println!("{} device(s) don't support FIDOv1:", no_fido1.len());
-    for (name, device) in &no_fido1 {
-        println!(
-            "- {:04x}:{:04x}: {}",
-            device.vendor_id(),
-            device.product_id(),
-            name
-        );
-    }
-
-    println!("");
-    println!(
-        "{} device(s) reported some other issue",
-        fido_devices.len() - bad_ok.len() - bad_err.len() - bad_only.len() - no_fido1.len()
-    );
 }
